@@ -125,6 +125,9 @@ default = ["cloudflare", "manual"]
 cloudflare = []
 manual = []
 zerossl = []
+freessl = []
+aliyun_dns = []
+dnspod = []
 
 [profile.release]
 opt-level = 3

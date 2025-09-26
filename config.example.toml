@@ -1,6 +1,14 @@
 # =============================================================================
 # ACME Commander 配置文件示例
 # =============================================================================
+# 版本: 0.1.2
+#
+# 配置文件支持以下功能:
+# - 多语言国际化支持 (zh-CN, ja-JP, en-US)
+# - 多 ACME 提供商支持 (Let's Encrypt, ZeroSSL, FreeSSL.cn)
+# - 多 DNS 提供商支持 (Cloudflare, 阿里云 DNS, DNSPod)
+# - 灵活的证书管理策略
+# =============================================================================
 #
 # 使用说明：
 # 1. 复制此文件为 config.toml
@@ -64,7 +72,8 @@ domains = ["example.com", "www.example.com", "api.example.com"]
 # ACME 提供商（必需）
 # 可选值：
 # - "letsencrypt": Let's Encrypt（推荐，完全免费）
-# - "zerossl": ZeroSSL（暂未实现）
+# - "zerossl": ZeroSSL（开发中）
+# - "freessl": FreeSSL.cn（计划中）
 provider = "letsencrypt"
 
 # 运行环境（必需）
@@ -94,7 +103,10 @@ user_agent = "acme-commander/0.1.1"
 # =============================================================================
 [dns]
 # DNS 提供商（必需）
-# 目前支持：cloudflare
+# 可选值：
+# - "cloudflare": Cloudflare DNS（已实现）
+# - "aliyun": 阿里云 DNS（计划中）
+# - "dnspod": DNSPod（计划中）
 provider = "cloudflare"
 
 # DNS 记录传播超时时间（秒，默认600）
@@ -147,6 +159,62 @@ api_base_url = "https://api.zerossl.com"
 timeout_seconds = 30
 
 # =============================================================================
+# FreeSSL.cn 配置（计划中）
+# =============================================================================
+[freessl]
+# FreeSSL.cn API 密钥（如果使用FreeSSL.cn作为ACME提供商）
+api_key = ""
+
+# FreeSSL.cn API 基础URL（通常无需修改）
+api_base_url = "https://api.freessl.cn"
+
+# FreeSSL.cn API 请求超时时间（秒，默认30）
+timeout_seconds = 30
+
+# =============================================================================
+# 阿里云 DNS 配置（计划中）
+# =============================================================================
+[dns.aliyun]
+# 阿里云 AccessKey ID
+access_key_id = ""
+
+# 阿里云 AccessKey Secret
+access_key_secret = ""
+
+# 阿里云区域 ID
+region_id = "cn-hangzhou"
+
+# 阿里云 API 基础URL（通常无需修改）
+api_base_url = "https://alidns.aliyuncs.com"
+
+# 阿里云 API 请求超时时间（秒，默认30）
+timeout_seconds = 30
+
+# =============================================================================
+# DNSPod 配置（计划中）
+# =============================================================================
+[dns.dnspod]
+# DNSPod API Token
+api_token = ""
+
+# DNSPod API 基础URL（通常无需修改）
+api_base_url = "https://dnsapi.cn"
+
+# DNSPod API 请求超时时间（秒，默认30）
+timeout_seconds = 30
+
+# =============================================================================
+# 国际化配置
+# =============================================================================
+[i18n]
+# 语言设置（可选，默认自动检测系统语言）
+# 可选值：auto, zh-CN, ja-JP, en-US
+language = "auto"
+
+# 是否启用语言自动检测
+auto_detect = true
+
+# =============================================================================
 # 日志配置
 # =============================================================================
 [logging]
@@ -174,10 +242,15 @@ timestamp_format = "%Y-%m-%d %H:%M:%S"
 # =============================================================================
 # 您也可以通过环境变量覆盖配置文件中的设置：
 #
-# ACME_PROVIDER: letsencrypt/zerossl
+# ACME_PROVIDER: letsencrypt/zerossl/freessl
 # ACME_ENVIRONMENT: sandbox/production
 # ACME_ACCOUNT_EMAIL: your-email@example.com
+# DNS_PROVIDER: cloudflare/aliyun/dnspod
 # CLOUDFLARE_API_TOKEN: your-api-token
+# ALIYUN_ACCESS_KEY_ID: your-access-key-id
+# ALIYUN_ACCESS_KEY_SECRET: your-access-key-secret
+# DNSPOD_API_TOKEN: your-api-token
+# I18N_LANGUAGE: auto/zh-CN/ja-JP/en-US
 #
 # 环境变量的优先级高于配置文件
 # =============================================================================
