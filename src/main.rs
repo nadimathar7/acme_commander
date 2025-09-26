@@ -20,7 +20,7 @@ use acme_commander::i18n;
 use acme_commander::logger::{LogConfig, LogLevel, LogOutput, init_logger};
 use rat_logger::error;
 use cli::{Cli, Commands};
-use utils::{init_logging, load_app_config, show_version_info, format_error};
+use utils::{init_logging, load_app_config, show_version_info, format_error, merge_config_with_cli_args, validate_certonly_config};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -36,10 +36,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("❌ 日志初始化失败: {}", e);
         std::process::exit(1);
     }
-    
+
     // 加载配置文件（如果提供）
     if let Err(e) = load_app_config(cli.config.clone()) {
-        error!("配置文件加载失败: {}", e);
+        eprintln!("❌ 配置文件加载失败: {}", e);
         std::process::exit(1);
     }
     
@@ -63,23 +63,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // 执行命令
     let result = match command {
-        Commands::Certonly { 
-            domains, 
-            email, 
-            production, 
-            dry_run, 
-            dns_provider, 
-            cloudflare_token, 
-            account_key, 
-            cert_key, 
-            output_dir, 
-            cert_name, 
-            force_renewal 
+        Commands::Certonly {
+            domains,
+            email,
+            production,
+            dry_run,
+            dns_provider,
+            cloudflare_token,
+            account_key,
+            cert_key,
+            output_dir,
+            cert_name,
+            force_renewal
         } => {
+            // 合并配置文件和命令行参数
+            let merged_config = merge_config_with_cli_args(
+                cli.config.clone(),
+                domains,
+                email,
+                production,
+                dry_run,
+                dns_provider,
+                cloudflare_token,
+                account_key,
+                cert_key,
+                output_dir.clone(),
+                cert_name.clone(),
+                force_renewal
+            )?;
+
+            // 验证必要配置
+            validate_certonly_config(&merged_config)?;
+
+            // 调用certonly命令
             commands::cmd_certonly(
-                domains, email, production, dry_run, dns_provider, 
-                cloudflare_token, account_key, cert_key, output_dir, 
-                cert_name, force_renewal
+                merged_config.domains,
+                merged_config.email,
+                merged_config.production,
+                merged_config.dry_run,
+                merged_config.dns_provider,
+                merged_config.cloudflare_token,
+                merged_config.account_key,
+                merged_config.cert_key,
+                merged_config.output_dir,
+                merged_config.cert_name,
+                merged_config.force_renewal
             ).await
         },
         Commands::Renew { cert_dir, force, dry_run } => {

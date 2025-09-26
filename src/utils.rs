@@ -9,7 +9,7 @@ use acme_commander::i18n;
 use acme_commander::i18n_logger;
 use acme_commander::logger::{LogConfig, LogLevel, LogOutput, init_logger};
 use rat_logger::info;
-use crate::cli::LogOutputType;
+use crate::cli::{LogOutputType, DnsProviderType};
 /// 初始化日志系统
 pub fn init_logging(
     verbose: bool,
@@ -52,7 +52,7 @@ pub fn init_logging(
         use_emoji: true,
         show_timestamp: true,
         show_module: verbose,
-        enable_async: false,
+        enable_async: false, // CLI工具使用同步模式
         batch_size: 2048,
         batch_interval_ms: 25,
         buffer_size: 16 * 1024,
@@ -108,6 +108,145 @@ pub fn mask_token(token: &str) -> String {
     } else {
         format!("{}***{}", &token[..4], &token[token.len()-4..])
     }
+}
+
+/// 合并后的certonly配置
+#[derive(Debug, Clone)]
+pub struct CertonlyConfig {
+    pub domains: Vec<String>,
+    pub email: String,
+    pub production: bool,
+    pub dry_run: bool,
+    pub dns_provider: DnsProviderType,
+    pub cloudflare_token: Option<String>,
+    pub account_key: Option<std::path::PathBuf>,
+    pub cert_key: Option<std::path::PathBuf>,
+    pub output_dir: std::path::PathBuf,
+    pub cert_name: String,
+    pub force_renewal: bool,
+}
+
+/// 合并配置文件和命令行参数
+pub fn merge_config_with_cli_args(
+    config_file: Option<std::path::PathBuf>,
+    cli_domains: Option<Vec<String>>,
+    cli_email: Option<String>,
+    cli_production: bool,
+    cli_dry_run: bool,
+    cli_dns_provider: DnsProviderType,
+    cli_cloudflare_token: Option<String>,
+    cli_account_key: Option<std::path::PathBuf>,
+    cli_cert_key: Option<std::path::PathBuf>,
+    cli_output_dir: std::path::PathBuf,
+    cli_cert_name: String,
+    cli_force_renewal: bool,
+) -> Result<CertonlyConfig, Box<dyn std::error::Error>> {
+    use acme_commander::config::{load_config, get_cloudflare_token};
+
+    // 尝试从配置文件加载
+    let app_config = if config_file.is_some() {
+        match load_config(config_file.clone(), None) {
+            Ok(config) => Some(config),
+            Err(e) => {
+                rat_logger::warn!("配置文件加载失败: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // 获取域名（命令行优先）
+    let domains = if let Some(domains) = cli_domains {
+        if domains.is_empty() {
+            // 如果命令行为空，尝试从配置文件获取
+            app_config
+                .as_ref()
+                .map(|config| config.certificate.domains.clone())
+                .unwrap_or_default()
+        } else {
+            domains
+        }
+    } else {
+        // 没有命令行参数，从配置文件获取
+        app_config
+            .as_ref()
+            .map(|config| config.certificate.domains.clone())
+            .unwrap_or_default()
+    };
+
+    // 获取邮箱（命令行优先）
+    let email = if let Some(email) = cli_email {
+        email
+    } else {
+        app_config
+            .as_ref()
+            .map(|config| config.account.email.clone())
+            .unwrap_or_default()
+    };
+
+    // 获取Cloudflare Token（优先级：命令行 > 环境变量 > 配置文件）
+    let cloudflare_token = if let Some(token) = cli_cloudflare_token {
+        Some(token)
+    } else {
+        get_cloudflare_token(config_file.clone())
+    };
+
+    // 获取生产环境设置（配置文件优先，然后命令行）
+    let production = if let Some(config) = app_config.as_ref() {
+        config.acme.environment == acme_commander::config::AcmeEnvironment::Production
+    } else {
+        cli_production
+    };
+
+    // 构建最终配置
+    let config = CertonlyConfig {
+        domains,
+        email,
+        production,
+        dry_run: cli_dry_run,
+        dns_provider: cli_dns_provider,
+        cloudflare_token,
+        account_key: cli_account_key,
+        cert_key: cli_cert_key,
+        output_dir: cli_output_dir,
+        cert_name: cli_cert_name,
+        force_renewal: cli_force_renewal,
+    };
+
+    Ok(config)
+}
+
+/// 验证certonly配置
+pub fn validate_certonly_config(config: &CertonlyConfig) -> Result<(), Box<dyn std::error::Error>> {
+    rat_logger::debug!("开始验证配置:");
+    rat_logger::debug!("  域名: {:?}", config.domains);
+    rat_logger::debug!("  邮箱: {}", config.email);
+    rat_logger::debug!("  DNS提供商: {:?}", config.dns_provider);
+    rat_logger::debug!("  Cloudflare Token: {:?}", config.cloudflare_token);
+
+    // 验证域名
+    if config.domains.is_empty() {
+        rat_logger::error!("域名验证失败: 域名列表为空");
+        return Err("必须提供至少一个域名。可以通过 --domains 参数或配置文件中的 domains 字段指定。".into());
+    }
+
+    // 验证邮箱
+    if config.email.is_empty() || !config.email.contains('@') {
+        rat_logger::error!("邮箱验证失败: 邮箱为空或格式无效");
+        return Err("必须提供有效的邮箱地址。可以通过 --email 参数或配置文件中的 account.email 字段指定。".into());
+    }
+
+    // 验证Cloudflare Token（仅当使用Cloudflare时）
+    if config.dns_provider == DnsProviderType::Cloudflare {
+        if config.cloudflare_token.is_none() || config.cloudflare_token.as_ref().unwrap().is_empty() {
+            rat_logger::error!("Cloudflare Token验证失败: Token为空");
+            return Err("使用Cloudflare DNS时必须提供API Token。可以通过 --cloudflare-token 参数、CLOUDFLARE_API_TOKEN 环境变量或配置文件中的 dns.cloudflare.api_token 字段指定。".into());
+        }
+    }
+
+    rat_logger::debug!("配置验证成功");
+    Ok(())
 }
 
 #[cfg(test)]

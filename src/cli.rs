@@ -43,13 +43,13 @@ pub enum LogOutputType {
 pub enum Commands {
     /// 获取新证书
     Certonly {
-        /// 要包含在证书中的域名
-        #[arg(long, required = true)]
-        domains: Vec<String>,
-        
-        /// 账户注册邮箱地址
-        #[arg(short, long, required = true)]
-        email: String,
+        /// 要包含在证书中的域名（如果配置文件中未提供则必需）
+        #[arg(long)]
+        domains: Option<Vec<String>>,
+
+        /// 账户注册邮箱地址（如果配置文件中未提供则必需）
+        #[arg(short, long)]
+        email: Option<String>,
         
         /// 使用生产环境（默认：测试环境）
         #[arg(long)]
@@ -173,7 +173,7 @@ pub enum Commands {
     },
 }
 
-#[derive(ValueEnum, Clone, Debug)]
+#[derive(ValueEnum, Clone, Debug, PartialEq)]
 pub enum DnsProviderType {
     Cloudflare,
 }

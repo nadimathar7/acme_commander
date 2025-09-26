@@ -486,6 +486,19 @@ impl Default for AdvancedConfig {
     }
 }
 
+/// 从TOML错误消息中提取缺失字段名称
+fn extract_missing_field(error_msg: &str) -> Option<String> {
+    // 示例错误消息: "missing field `email`"
+    if let Some(start) = error_msg.find("missing field `") {
+        let remaining = &error_msg[start + 15..];
+        if let Some(end) = remaining.find('`') {
+            let field = &remaining[..end];
+            return Some(field.to_string());
+        }
+    }
+    None
+}
+
 impl ConfigManager {
     /// 创建新的配置管理器
     pub fn new(config_file: PathBuf) -> Self {
@@ -545,11 +558,11 @@ impl ConfigManager {
             .extension()
             .and_then(|ext| ext.to_str())
             .unwrap_or("toml");
-        
+
         match extension {
             "toml" => {
                 toml::from_str(content)
-                    .map_err(|e| AcmeError::ConfigError(format!("Failed to parse TOML config: {}", e)))
+                    .map_err(|e| self.format_toml_parse_error(e))
             }
             "yaml" | "yml" => {
                 serde_yaml::from_str(content)
@@ -564,6 +577,48 @@ impl ConfigManager {
                 extension
             ))),
         }
+    }
+
+    /// 格式化TOML解析错误，提供更友好的错误信息
+    fn format_toml_parse_error(&self, error: toml::de::Error) -> AcmeError {
+        let error_msg = error.to_string();
+
+        // 分析常见错误并提供修复建议
+        if error_msg.contains("missing field") {
+            if let Some(field) = extract_missing_field(&error_msg) {
+                return AcmeError::ConfigError(format!(
+                    "配置文件缺少必需字段: '{}'\n\
+                    \n可能的修复方案:\n\
+                    1. 检查对应的部分是否包含此字段\n\
+                    2. 确保字段名称拼写正确\n\
+                    3. 确保字段值格式正确\n\
+                    \n例如，如果缺少 'email' 字段，请在 [account] 部分添加:\n\
+                    email = \"your-email@example.com\"",
+                    field
+                ));
+            }
+        }
+
+        if error_msg.contains("expected") && error_msg.contains("found") {
+            return AcmeError::ConfigError(format!(
+                "配置文件格式错误: {}\n\
+                \n常见的格式问题:\n\
+                1. 字符串需要用引号包围\n\
+                2. 数组需要用方括号包围\n\
+                3. 布尔值应为 true/false\n\
+                4. 数字不需要引号\n\
+                \n请检查配置文件的语法格式。",
+                error_msg
+            ));
+        }
+
+        // 默认错误信息
+        AcmeError::ConfigError(format!(
+            "配置文件解析错误: {}\n\
+            \n请检查配置文件的语法是否正确。\n\
+            你可以参考 config.example.toml 文件中的示例配置。",
+            error_msg
+        ))
     }
     
     /// 序列化配置
@@ -600,12 +655,20 @@ impl ConfigManager {
         
         // 验证账户配置
         if self.config.account.email.is_empty() {
-            return Err(AcmeError::ConfigError("Account email cannot be empty".to_string()));
+            return Err(AcmeError::ConfigError(
+                "配置文件 [account] 部分缺少必需的 'email' 字段。\n\
+                请在配置文件中添加: email = \"your-email@example.com\"\n\
+                或者通过命令行参数 --email your-email@example.com 指定".to_string()
+            ));
         }
-        
+
         // 验证证书配置
         if self.config.certificate.domains.is_empty() {
-            return Err(AcmeError::ConfigError("At least one domain must be specified".to_string()));
+            return Err(AcmeError::ConfigError(
+                "配置文件 [certificate] 部分缺少必需的 'domains' 字段。\n\
+                请在配置文件中添加: domains = [\"example.com\", \"www.example.com\"]\n\
+                或者通过命令行参数 --domains example.com --domains www.example.com 指定".to_string()
+            ));
         }
         
                 
@@ -613,12 +676,26 @@ impl ConfigManager {
         match self.config.dns.provider.as_str() {
             "cloudflare" => {
                 if self.config.dns.cloudflare.is_none() {
-                    return Err(AcmeError::ConfigError("Cloudflare configuration is required".to_string()));
+                    return Err(AcmeError::ConfigError(
+                        "配置文件 [dns.cloudflare] 部分缺失。\n\
+                        请添加以下配置:\n\
+                        [dns.cloudflare]\n\
+                        api_token = \"your-cloudflare-api-token\"".to_string()
+                    ));
+                } else if let Some(ref cloudflare) = self.config.dns.cloudflare {
+                    if cloudflare.api_token.is_none() || cloudflare.api_token.as_ref().unwrap().is_empty() {
+                        return Err(AcmeError::ConfigError(
+                            "配置文件 [dns.cloudflare] 部分缺少必需的 'api_token' 字段。\n\
+                            请添加: api_token = \"your-cloudflare-api-token\"\n\
+                            或者通过 CLOUDFLARE_API_TOKEN 环境变量设置".to_string()
+                        ));
+                    }
                 }
             }
             _ => {
                 return Err(AcmeError::ConfigError(format!(
-                    "Unsupported DNS provider: {}",
+                    "不支持的 DNS 提供商: {}\n\
+                    目前支持的 DNS 提供商: cloudflare",
                     self.config.dns.provider
                 )));
             }
