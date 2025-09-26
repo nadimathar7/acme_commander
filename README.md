@@ -1,5 +1,11 @@
 # ACME Commander
 
+[![Crates.io](https://img.shields.io/crates/v/acme_commander.svg)](https://crates.io/crates/acme_commander)
+[![Crates.io](https://img.shields.io/crates/d/acme_commander.svg)](https://crates.io/crates/acme_commander)
+[![License: LGPL v3](https://img.shields.io/badge/License-LGPL%20v3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
+
+**简体中文** | [English](README.en.md) | [日本語](README.ja.md)
+
 一个现代化的 ACME 客户端，专注于 SSL/TLS 证书的自动化管理。项目名取自经典 RTS 游戏《Command & Conquer》的"指挥官"角色，寓意自动化证书调度。
 
 ## 🚀 核心特性
@@ -75,7 +81,7 @@ acme-commander renew --cert-dir ./certs --force
 
 ```bash
 # 验证 Cloudflare Token
-acme-commander validate cloudflare --cloudflare-token YOUR_CF_TOKEN
+acme-commander validate --cloudflare-token YOUR_CF_TOKEN
 ```
 
 ### 4. 生成密钥
@@ -112,11 +118,8 @@ acme-commander revoke cert.crt \
 ### 日志配置
 
 ```bash
-# 启用详细日志
+# 启用详细日志（调试级别）
 acme-commander --verbose certonly ...
-
-# 启用调试日志
-acme-commander --debug certonly ...
 
 # 日志输出到文件
 acme-commander --log-output file --log-file acme.log certonly ...
@@ -234,7 +237,7 @@ acme-commander certonly \
 1. **Cloudflare Token 无效**
    ```bash
    # 验证 token
-   acme-commander validate cloudflare --cloudflare-token YOUR_TOKEN
+   acme-commander validate --cloudflare-token YOUR_TOKEN
    ```
 
 2. **DNS 传播延迟**
@@ -249,7 +252,7 @@ acme-commander certonly \
 
 ```bash
 # 启用详细调试信息
-RUST_LOG=debug acme-commander --debug certonly ...
+acme-commander --verbose certonly ...
 ```
 
 ## 👥 维护者
