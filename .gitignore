@@ -1,6 +1,7 @@
 /target
 /docs/error.txt
 /certs
+/test_certs
 /Cargo.lock
 **/*.rs.bak
 *.log
@@ -27,6 +28,7 @@ config.json
 *.cer
 *.p12
 *.pfx
+*.csr
 
 # 日志和审计文件
 logs/

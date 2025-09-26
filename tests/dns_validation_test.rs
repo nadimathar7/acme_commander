@@ -11,7 +11,11 @@ use acme_commander::logger::{init_logger, LogConfig, LogLevel, LogOutput};
 #[tokio::test]
 async fn test_dns_validation_with_cloudflare() {
     // 初始化日志
-    let _ = init_logger();
+    let _ = init_logger(LogConfig {
+        level: LogLevel::Debug,
+        output: LogOutput::Terminal,
+        ..Default::default()
+    });
     
     // 测试域名
     let domain = "gs1.sukiyaki.su";

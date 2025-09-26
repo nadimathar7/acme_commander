@@ -19,7 +19,7 @@ use acme_commander::error::AcmeError;
 use acme_commander::logger::{LogConfig, LogLevel, LogOutput, init_logger};
 use rat_logger::error;
 use cli::{Cli, Commands};
-use utils::{init_logging, load_config, show_version_info, format_error};
+use utils::{init_logging, load_app_config, show_version_info, format_error};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     
     // 加载配置文件（如果提供）
-    if let Err(e) = load_config(cli.config.clone()) {
+    if let Err(e) = load_app_config(cli.config.clone()) {
         error!("配置文件加载失败: {}", e);
         std::process::exit(1);
     }

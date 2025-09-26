@@ -61,8 +61,8 @@ pub fn init_logging(
 }
 
 /// 加载配置文件
-pub fn load_config(config_path: Option<PathBuf>) -> Result<crate::config::AcmeConfig, Box<dyn std::error::Error>> {
-    use crate::config::{create_config_manager, load_config};
+pub fn load_app_config(config_path: Option<PathBuf>) -> Result<acme_commander::config::AcmeConfig, Box<dyn std::error::Error>> {
+    use acme_commander::config::load_config;
 
     let config = load_config(config_path, None)?;
     Ok(config)

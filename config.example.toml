@@ -1,0 +1,56 @@
+# ACME Commander 配置文件
+# 此文件包含敏感信息，请勿提交到版本控制系统
+# 复制此文件为 config.toml 并填写您的凭证
+
+[acme]
+# ACME 服务器配置 (沙盒模式)
+directory_url = "https://acme-staging-v02.api.letsencrypt.org/directory"
+contact_email = "your-email@example.com"
+terms_of_service_agreed = true
+timeout = 30
+user_agent = "acme-commander/0.1.1"
+
+[certificate]
+# 证书文件配置
+key_file = "./certificate.key"
+cert_file = "./certificate.pem"
+chain_file = "./chain.pem"
+fullchain_file = "./fullchain.pem"
+# CSR文件路径（可选，如果不存在则自动生成）
+# csr_file = "./certificate.csr"
+domains = ["example.com"]
+
+[dns]
+# DNS 提供商配置
+provider = "cloudflare"
+
+# ZeroSSL 配置 (可选)
+[zerossl]
+api_key = ""  # 如果使用 ZeroSSL 作为 ACME 提供商，请填写 API Key
+
+# Cloudflare DNS 配置
+[cloudflare]
+api_token = ""  # 请在此处填写您的 Cloudflare API Token
+api_base_url = "https://api.cloudflare.com/client/v4"
+
+# 日志配置
+[logging]
+enabled = true
+level = "info"
+output = "terminal"  # terminal, file, both
+use_colors = true
+use_emoji = true
+show_timestamp = true
+show_module = false
+enable_async = false
+batch_size = 2048
+batch_interval_ms = 25
+buffer_size = 16384
+
+# 文件日志配置 (如果 output 为 "file" 或 "both")
+[logging.file]
+log_dir = "./logs"
+max_file_size = 10485760  # 10MB
+max_compressed_files = 5
+
+

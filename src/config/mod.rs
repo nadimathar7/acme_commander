@@ -22,10 +22,10 @@ pub struct AcmeConfig {
     pub zerossl: Option<ZeroSslConfig>,
     /// 日志配置
     pub logging: LoggingConfig,
-    /// 安全配置
-    pub security: SecurityConfig,
-    /// 高级配置
-    pub advanced: AdvancedConfig,
+    /// 安全配置 (可选)
+    pub security: Option<SecurityConfig>,
+    /// 高级配置 (可选)
+    pub advanced: Option<AdvancedConfig>,
 }
 
 /// ACME 服务器配置
@@ -82,17 +82,11 @@ pub struct CertificateConfig {
     pub chain_file: PathBuf,
     /// 完整链文件路径
     pub fullchain_file: PathBuf,
+    /// CSR文件路径（可选，如果不存在则自动生成）
+    pub csr_file: Option<PathBuf>,
     /// 域名列表
     pub domains: Vec<String>,
-    /// 密钥类型（固定为 ECDSA）
-    pub key_type: String,
-    /// 椭圆曲线（固定为 secp384r1）
-    pub elliptic_curve: String,
-    /// 证书有效期（天数）
-    pub validity_days: u32,
-    /// 续期阈值（天数）
-    pub renewal_threshold: u32,
-    /// 组织信息
+            /// 组织信息
     pub organization: Option<String>,
     /// 组织单位
     pub organizational_unit: Option<String>,
@@ -239,8 +233,8 @@ impl Default for AcmeConfig {
             dns: DnsConfig::default(),
             zerossl: None,
             logging: LoggingConfig::default(),
-            security: SecurityConfig::default(),
-            advanced: AdvancedConfig::default(),
+            security: None,
+            advanced: None,
         }
     }
 }
@@ -278,11 +272,8 @@ impl Default for CertificateConfig {
             cert_file: PathBuf::from("cert.pem"),
             chain_file: PathBuf::from("chain.pem"),
             fullchain_file: PathBuf::from("fullchain.pem"),
+            csr_file: None,
             domains: Vec::new(),
-            key_type: "ecdsa".to_string(),
-            elliptic_curve: "secp384r1".to_string(),
-            validity_days: 90,
-            renewal_threshold: 30,
             organization: None,
             organizational_unit: None,
             country: None,
@@ -506,15 +497,7 @@ impl ConfigManager {
             return Err(AcmeError::ConfigError("At least one domain must be specified".to_string()));
         }
         
-        // 验证密钥类型和椭圆曲线
-        if self.config.certificate.key_type != "ecdsa" {
-            return Err(AcmeError::ConfigError("Key type must be 'ecdsa'".to_string()));
-        }
-        
-        if self.config.certificate.elliptic_curve != "secp384r1" {
-            return Err(AcmeError::ConfigError("Elliptic curve must be 'secp384r1'".to_string()));
-        }
-        
+                
         // 验证 DNS 提供商
         match self.config.dns.provider.as_str() {
             "cloudflare" => {

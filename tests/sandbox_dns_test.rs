@@ -13,9 +13,13 @@ const TEST_DOMAIN: &str = "gs1.sukiyaki.su";
 
 
 #[tokio::test]
-async fn test_sandbox_dns_validation() {
+async fn test_sandbox_dns_validation() -> Result<(), Box<dyn std::error::Error>> {
     // 初始化日志
-    let _ = init_logger();
+    let _ = init_logger(LogConfig {
+        level: LogLevel::Debug,
+        output: LogOutput::Terminal,
+        ..Default::default()
+    });
     
     println!("开始沙盒模式 DNS 验证测试，域名: {}", TEST_DOMAIN);
     
@@ -23,12 +27,15 @@ async fn test_sandbox_dns_validation() {
     let dns_manager = match acme_commander::config::get_cloudflare_token(None)
         .map(|token| CloudflareDnsManager::new(token))
         .transpose() {
-        Ok(manager) => {
+        Ok(Some(manager)) => {
             println!("✅ 成功创建 Cloudflare DNS 管理器");
             manager
         },
+        Ok(None) => {
+            return Err("无法创建 Cloudflare DNS 管理器: 未找到配置".into());
+        },
         Err(e) => {
-            panic!("无法创建 Cloudflare DNS 管理器: {}", e);
+            return Err(format!("无法创建 Cloudflare DNS 管理器: {}", e).into());
         }
     };
     
@@ -242,4 +249,5 @@ async fn test_sandbox_dns_validation() {
     }
     
     println!("✅ 沙盒模式 DNS 验证测试完成");
+    Ok(())
 }

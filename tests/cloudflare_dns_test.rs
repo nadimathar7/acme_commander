@@ -3,12 +3,16 @@
 
 use acme_commander::dns::cloudflare::CloudflareDnsManager;
 use acme_commander::dns::{DnsManager, DnsChallengeManager};
-use acme_commander::logger::{init_logger, LogLevel, LogOutput};
+use acme_commander::logger::{init_logger, LogConfig, LogLevel, LogOutput};
 
 #[tokio::test]
 async fn test_cloudflare_dns_operations() {
     // 初始化日志
-    let _ = init_logger();
+    let _ = init_logger(LogConfig {
+        level: LogLevel::Debug,
+        output: LogOutput::Terminal,
+        ..Default::default()
+    });
     
     // 测试域名
     let domain = "gs1.sukiyaki.su";
