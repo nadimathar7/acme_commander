@@ -5,6 +5,8 @@ use crate::crypto::{KeyPair, PemData, PemType};
 use crate::error::{AcmeError, AcmeResult};
 use rcgen::{Certificate, CertificateParams, DistinguishedName, DnType, SanType};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH, Duration as StdDuration};
 use ::time::OffsetDateTime;
 use x509_parser::prelude::*;
@@ -489,6 +491,292 @@ impl CertificateManager {
     /// 获取证书密钥
     pub fn certificate_key(&self) -> &KeyPair {
         &self.certificate_key
+    }
+
+    /// 准备CSR：如果存在CSR文件则使用，否则生成新的CSR
+    /// 返回 (CSR的DER数据, CSR的PEM格式数据)
+    pub fn prepare_csr(&self, csr_file: &Option<PathBuf>, request: &CertificateRequest) -> AcmeResult<(Vec<u8>, String)> {
+        match csr_file {
+            Some(path) if path.exists() => {
+                // 使用现有的CSR文件
+                let csr_pem = fs::read_to_string(path)
+                    .map_err(|e| AcmeError::IoError(format!("读取CSR文件失败: {}", e)))?;
+
+                let csr_der = self.extract_der_from_pem(&csr_pem)?;
+                Ok((csr_der, csr_pem))
+            },
+            Some(path) => {
+                // CSR文件不存在，生成新的CSR并保存
+                let (csr_der, csr_pem) = self.generate_and_save_csr(request, path)?;
+                Ok((csr_der, csr_pem))
+            },
+            None => {
+                // 没有配置CSR文件，直接生成CSR
+                let csr_der = self.generate_csr(request)?;
+                let csr_pem = self.generate_csr_pem(request)?;
+                Ok((csr_der, csr_pem))
+            }
+        }
+    }
+
+    /// 生成CSR并保存到文件
+    pub fn generate_and_save_csr(&self, request: &CertificateRequest, output_path: &Path) -> AcmeResult<(Vec<u8>, String)> {
+        let csr_der = self.generate_csr(request)?;
+        let csr_pem = self.generate_csr_pem(request)?;
+
+        // 确保目录存在
+        if let Some(parent) = output_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| AcmeError::IoError(format!("创建目录失败: {}", e)))?;
+        }
+
+        // 保存CSR文件
+        fs::write(output_path, &csr_pem)
+            .map_err(|e| AcmeError::IoError(format!("保存CSR文件失败: {}", e)))?;
+
+        Ok((csr_der, csr_pem))
+    }
+
+    /// 仅生成CSR（不保存文件）
+    pub fn generate_csr_only(&self, request: &CertificateRequest) -> AcmeResult<(Vec<u8>, String)> {
+        let csr_der = self.generate_csr(request)?;
+        let csr_pem = self.generate_csr_pem(request)?;
+        Ok((csr_der, csr_pem))
+    }
+
+    /// 从PEM格式提取DER数据
+    pub fn extract_der_from_pem(&self, pem_data: &str) -> AcmeResult<Vec<u8>> {
+        let pem = PemData::from_pem_string(pem_data)
+            .map_err(|e| AcmeError::CryptoError(format!("解析PEM数据失败: {}", e)))?;
+
+        // 验证是CSR类型
+        if pem.pem_type != PemType::CertificateRequest {
+            return Err(AcmeError::CryptoError("PEM数据不是CSR格式".to_string()));
+        }
+
+        Ok(pem.data)
+    }
+
+    /// 便捷函数：使用域名列表准备CSR
+    pub fn prepare_domain_csr(&self, csr_file: &Option<PathBuf>, domains: &[String]) -> AcmeResult<(Vec<u8>, String)> {
+        if domains.is_empty() {
+            return Err(AcmeError::InvalidDomain("至少需要一个域名".to_string()));
+        }
+
+        let common_name = domains[0].clone();
+        let sans = domains[1..].to_vec();
+
+        let request = create_domain_certificate_request(common_name, sans);
+        self.prepare_csr(csr_file, &request)
+    }
+
+    /// 便捷函数：生成域名CSR并保存
+    pub fn generate_and_save_domain_csr(&self, domains: &[String], output_path: &Path) -> AcmeResult<(Vec<u8>, String)> {
+        if domains.is_empty() {
+            return Err(AcmeError::InvalidDomain("至少需要一个域名".to_string()));
+        }
+
+        let common_name = domains[0].clone();
+        let sans = domains[1..].to_vec();
+
+        let request = create_domain_certificate_request(common_name, sans);
+        self.generate_and_save_csr(&request, output_path)
+    }
+
+    /// 验证证书PEM格式
+    pub fn validate_certificate_pem_format(pem_data: &str, allow_multiple: bool) -> bool {
+        let begin_count = pem_data.matches("-----BEGIN CERTIFICATE-----").count();
+        let end_count = pem_data.matches("-----END CERTIFICATE-----").count();
+
+        if begin_count == 0 || end_count == 0 {
+            return false;
+        }
+
+        if begin_count != end_count {
+            return false;
+        }
+
+        if !allow_multiple && begin_count > 1 {
+            return false;
+        }
+
+        // 检查基本结构
+        let lines: Vec<&str> = pem_data.lines().collect();
+        let mut has_begin = false;
+        let mut has_end = false;
+        let mut in_cert = false;
+        let mut cert_count = 0;
+
+        for line in lines {
+            if line.starts_with("-----BEGIN CERTIFICATE-----") {
+                if in_cert {
+                    return false; // 嵌套的证书开始标记
+                }
+                has_begin = true;
+                in_cert = true;
+                cert_count += 1;
+            } else if line.starts_with("-----END CERTIFICATE-----") {
+                if !in_cert {
+                    return false; // 没有对应的开始标记
+                }
+                has_end = true;
+                in_cert = false;
+            }
+        }
+
+        has_begin && has_end && cert_count > 0
+    }
+
+    /// 验证私钥PEM格式
+    pub fn validate_private_key_pem_format(pem_data: &str) -> bool {
+        pem_data.contains("-----BEGIN PRIVATE KEY-----") &&
+        pem_data.contains("-----END PRIVATE KEY-----")
+    }
+
+    /// 验证CSR PEM格式
+    pub fn validate_csr_pem_format(pem_data: &str) -> bool {
+        pem_data.contains("-----BEGIN CERTIFICATE REQUEST-----") &&
+        pem_data.contains("-----END CERTIFICATE REQUEST-----")
+    }
+
+    /// 验证证书文件集合
+    pub fn validate_certificate_files(
+        &self,
+        output_dir: &Path,
+        primary_domain: &str,
+        check_csr: bool,
+    ) -> AcmeResult<CertificateValidationResult> {
+        let mut result = CertificateValidationResult {
+            private_key_valid: false,
+            certificate_valid: false,
+            full_chain_valid: false,
+            chain_valid: false,
+            csr_valid: false,
+            file_sizes: std::collections::HashMap::new(),
+            certificate_count: 0,
+            chain_certificate_count: 0,
+        };
+
+        // 检查私钥文件
+        let key_path = output_dir.join(format!("{}.key", primary_domain));
+        if key_path.exists() {
+            let key_content = fs::read_to_string(&key_path)?;
+            result.private_key_valid = Self::validate_private_key_pem_format(&key_content);
+
+            // 尝试解析私钥以验证其有效性
+            if result.private_key_valid {
+                if let Err(_) = KeyPair::from_private_key_pem(&key_content) {
+                    result.private_key_valid = false;
+                }
+            }
+
+            result.file_sizes.insert("private_key".to_string(), key_content.len());
+        }
+
+        // 检查完整证书文件（必需）
+        let fullchain_path = output_dir.join(format!("{}.fullchain.pem", primary_domain));
+        if fullchain_path.exists() {
+            let fullchain_content = fs::read_to_string(&fullchain_path)?;
+            result.full_chain_valid = Self::validate_certificate_pem_format(&fullchain_content, true);
+            result.certificate_count = fullchain_content.matches("-----BEGIN CERTIFICATE-----").count();
+            result.file_sizes.insert("full_chain".to_string(), fullchain_content.len());
+        }
+
+        // 检查单独证书文件（如果存在）
+        let cert_path = output_dir.join(format!("{}.pem", primary_domain));
+        if cert_path.exists() {
+            let cert_content = fs::read_to_string(&cert_path)?;
+            result.certificate_valid = Self::validate_certificate_pem_format(&cert_content, false);
+            result.file_sizes.insert("certificate".to_string(), cert_content.len());
+        }
+
+        // 检查证书链文件（如果存在）
+        let chain_path = output_dir.join(format!("{}.chain.pem", primary_domain));
+        if chain_path.exists() {
+            let chain_content = fs::read_to_string(&chain_path)?;
+            if !chain_content.trim().is_empty() {
+                result.chain_valid = Self::validate_certificate_pem_format(&chain_content, true);
+                result.chain_certificate_count = chain_content.matches("-----BEGIN CERTIFICATE-----").count();
+                result.file_sizes.insert("chain".to_string(), chain_content.len());
+            }
+        }
+
+        // 检查CSR文件（如果配置了检查）
+        if check_csr {
+            let csr_path = output_dir.join(format!("{}.csr", primary_domain));
+            if csr_path.exists() {
+                let csr_content = fs::read_to_string(&csr_path)?;
+                result.csr_valid = Self::validate_csr_pem_format(&csr_content);
+                result.file_sizes.insert("csr".to_string(), csr_content.len());
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// 便捷函数：验证证书文件（简化版本）
+    pub fn verify_certificate_files_simple(
+        &self,
+        output_dir: &Path,
+        primary_domain: &str,
+    ) -> AcmeResult<()> {
+        let result = self.validate_certificate_files(output_dir, primary_domain, false)?;
+
+        // 检查必需的文件
+        if !result.private_key_valid {
+            return Err(AcmeError::IoError("私钥文件验证失败".to_string()));
+        }
+
+        if !result.full_chain_valid {
+            return Err(AcmeError::IoError("完整证书文件验证失败".to_string()));
+        }
+
+        if result.certificate_count == 0 {
+            return Err(AcmeError::IoError("证书链中没有找到证书".to_string()));
+        }
+
+        Ok(())
+    }
+}
+
+/// 证书验证结果
+#[derive(Debug, Clone)]
+pub struct CertificateValidationResult {
+    /// 私钥是否有效
+    pub private_key_valid: bool,
+    /// 单独证书是否有效
+    pub certificate_valid: bool,
+    /// 完整证书链是否有效
+    pub full_chain_valid: bool,
+    /// 证书链是否有效
+    pub chain_valid: bool,
+    /// CSR是否有效
+    pub csr_valid: bool,
+    /// 文件大小信息
+    pub file_sizes: std::collections::HashMap<String, usize>,
+    /// 证书数量
+    pub certificate_count: usize,
+    /// 链中证书数量
+    pub chain_certificate_count: usize,
+}
+
+impl CertificateValidationResult {
+    /// 检查所有文件是否都有效
+    pub fn is_all_valid(&self) -> bool {
+        self.private_key_valid && self.full_chain_valid
+    }
+
+    /// 获取验证摘要
+    pub fn summary(&self) -> String {
+        format!(
+            "验证结果: 私钥={}, 证书={}, 完整链={}, 链={}, CSR={}, 证书总数={}",
+            self.private_key_valid,
+            self.certificate_valid,
+            self.full_chain_valid,
+            self.chain_valid,
+            self.csr_valid,
+            self.certificate_count
+        )
     }
 }
 

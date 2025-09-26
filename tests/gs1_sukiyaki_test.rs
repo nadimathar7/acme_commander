@@ -11,32 +11,17 @@ use acme_commander::dns::{DnsProvider, DnsManager, DnsChallengeManager};
 use acme_commander::dns::cloudflare::CloudflareDnsManager;
 use acme_commander::{acme_info, acme_debug, acme_warn, acme_error};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// 测试域名 - 从配置文件读取
 /// 测试证书输出目录
 const TEST_OUTPUT_DIR: &str = "./test_certs";
 
-/// 从PEM格式提取DER数据
-fn extract_der_from_pem(pem_data: &str) -> AcmeResult<Vec<u8>> {
-    use acme_commander::crypto::pem::{PemData, PemType};
+// 注释：extract_der_from_pem 功能已移至框架层 CertificateManager::extract_der_from_pem
 
-    // 尝试解析PEM数据
-    let pem = PemData::from_pem_string(pem_data)
-        .map_err(|e| acme_commander::error::AcmeError::CryptoError(
-            format!("解析PEM数据失败: {}", e)
-        ))?;
-
-    // 验证是CSR类型
-    if pem.pem_type != PemType::CertificateRequest {
-        return Err(acme_commander::error::AcmeError::CryptoError(
-            "PEM数据不是CSR格式".to_string()
-        ));
-    }
-
-    Ok(pem.data)
-}
+/// 配置文件路径常量
+const CONFIG_FILE: &str = "config.toml";
 
 /// 主测试函数 - 完整的证书申请流程测试
 #[tokio::test]
@@ -54,7 +39,7 @@ async fn test_complete_certificate_issuance() -> AcmeResult<()> {
 
     // 第一步：加载配置
     acme_info!("\n[步骤 1] 加载配置文件");
-    let app_config = config::load_config(Some("config.toml".into()), None)
+    let app_config = config::load_config(Some(CONFIG_FILE.into()), None)
         .map_err(|e| acme_commander::error::AcmeError::ConfigError(
             format!("加载配置文件失败: {}", e)
         ))?;
@@ -137,53 +122,23 @@ async fn test_complete_certificate_issuance() -> AcmeResult<()> {
     // 第十步：完成订单（发送CSR）
     acme_info!("\n[步骤 10] 完成订单（发送CSR）");
 
-    // 检查是否有预先生成的CSR文件
-    let (csr_der, csr_pem) = if let Some(ref csr_file) = app_config.certificate.csr_file {
+    // 使用框架层的CSR处理方法
+    let cert_manager = acme_commander::acme::certificate::CertificateManager::new(cert_key.clone());
+    let (csr_der, csr_pem) = cert_manager.prepare_domain_csr(
+        &app_config.certificate.csr_file,
+        &app_config.certificate.domains
+    )?;
+
+    // 记录CSR处理方式
+    if let Some(ref csr_file) = app_config.certificate.csr_file {
         if csr_file.exists() {
             acme_debug!("📁 使用预生成的CSR文件: {}", csr_file.display());
-            let csr_pem = std::fs::read_to_string(csr_file)?;
-
-            // 从PEM格式提取DER数据
-            let csr_der = extract_der_from_pem(&csr_pem)?;
-            (csr_der, csr_pem)
         } else {
-            acme_debug!("📝 CSR文件不存在，自动生成CSR: {}", csr_file.display());
-
-            // 创建证书请求
-            let cert_request = acme_commander::acme::certificate::create_domain_certificate_request(
-                app_config.certificate.domains[0].clone(),
-                vec![], // 无额外SAN域名
-            );
-
-            // 生成CSR
-            let (generated_der, generated_pem) = {
-                let cert_manager = acme_commander::acme::certificate::CertificateManager::new(cert_key.clone());
-                let der = cert_manager.generate_csr(&cert_request)?;
-                let pem = cert_manager.generate_csr_pem(&cert_request)?;
-                (der, pem)
-            };
-
-            // 保存CSR到文件
-            std::fs::write(csr_file, &generated_pem)?;
-            acme_debug!("✅ CSR已保存到文件: {}", csr_file.display());
-
-            (generated_der, generated_pem)
+            acme_debug!("📝 CSR文件不存在，已生成并保存到: {}", csr_file.display());
         }
     } else {
-        acme_debug!("📝 未配置CSR文件路径，自动生成CSR");
-
-        // 创建证书请求
-        let cert_request = acme_commander::acme::certificate::create_domain_certificate_request(
-            app_config.certificate.domains[0].clone(),
-            vec![], // 无额外SAN域名
-        );
-
-        // 生成CSR
-        let cert_manager = acme_commander::acme::certificate::CertificateManager::new(cert_key.clone());
-        let csr_der = cert_manager.generate_csr(&cert_request)?;
-        let csr_pem = cert_manager.generate_csr_pem(&cert_request)?;
-        (csr_der, csr_pem)
-    };
+        acme_debug!("📝 未配置CSR文件路径，已生成内存中的CSR");
+    }
     acme_debug!("✅ CSR准备完成");
 
     // 完成订单
@@ -219,7 +174,7 @@ async fn test_complete_certificate_issuance() -> AcmeResult<()> {
     acme_debug!("  证书PEM长度: {} 字节", certificate_pem.len());
 
     // 解析证书链并保存
-    save_certificate_pem_files(&certificate_pem, &cert_key, &app_config.certificate.domains)?;
+    save_certificate_pem_files(&certificate_pem, &cert_key, &app_config.certificate.domains, &app_config.certificate.csr_file)?;
     acme_info!("✅ 成功下载并保存证书文件");
 
     // 第十二步：验证证书文件
@@ -330,9 +285,15 @@ async fn process_authorizations(
         ).await?;
         acme_debug!("✅ 挑战完成并验证成功");
 
-        // 清理DNS记录
-        dns_challenge_manager.delete_challenge_record(&challenge_record, false).await?;
-        acme_debug!("✅ DNS记录清理完成");
+        // 清理DNS记录（添加错误处理，确保即使清理失败也不会影响整体流程）
+        if let Err(cleanup_error) = dns_challenge_manager.delete_challenge_record(&challenge_record, false).await {
+            acme_warn!("⚠️  DNS记录清理失败: {}", cleanup_error);
+            acme_debug!("  域名: {}", authorization.identifier.value);
+            acme_debug!("  记录值: {}", dns_record_value);
+            acme_warn!("  建议：请手动清理DNS记录以避免资源泄漏");
+        } else {
+            acme_debug!("✅ DNS记录清理完成");
+        }
     }
 
     Ok(())
@@ -340,11 +301,11 @@ async fn process_authorizations(
 
 /// 创建DNS管理器
 async fn create_dns_manager() -> AcmeResult<Box<dyn DnsManager>> {
-    let app_config = config::load_config(Some("config.toml".into()), None)?;
+    let app_config = config::load_config(Some(CONFIG_FILE.into()), None)?;
 
     match app_config.dns.provider.as_str() {
         "cloudflare" => {
-            let cloudflare_token = config::get_cloudflare_token(Some("config.toml".into()))
+            let cloudflare_token = config::get_cloudflare_token(Some(CONFIG_FILE.into()))
                 .ok_or_else(|| acme_commander::error::AcmeError::ConfigError(
                     "未配置Cloudflare API Token".to_string()
                 ))?;
@@ -374,6 +335,7 @@ fn save_certificate_pem_files(
     certificate_pem: &str,
     cert_key: &KeyPair,
     domains: &[String],
+    csr_file: &Option<PathBuf>,
 ) -> AcmeResult<()> {
     let output_dir = Path::new(TEST_OUTPUT_DIR);
 
@@ -439,8 +401,7 @@ fn save_certificate_pem_files(
     acme_debug!("  完整证书长度: {} 字节", certificate_pem.len());
 
     // 如果配置了CSR文件，复制到测试输出目录
-    let app_config = config::load_config(Some("config.toml".into()), None)?;
-    if let Some(ref csr_file) = app_config.certificate.csr_file {
+    if let Some(ref csr_file) = csr_file {
         if csr_file.exists() {
             let csr_dest_path = output_dir.join(format!("{}.csr", primary_domain));
             fs::copy(csr_file, &csr_dest_path)
@@ -454,68 +415,48 @@ fn save_certificate_pem_files(
     Ok(())
 }
 
-/// 验证证书文件
+/// 验证证书文件（使用框架层的验证方法）
 fn verify_certificate_files(domains: &[String]) -> AcmeResult<()> {
+    use acme_commander::acme::certificate::CertificateManager;
+
     let output_dir = Path::new(TEST_OUTPUT_DIR);
     let primary_domain = domains.first().cloned().unwrap_or_else(|| "unknown".to_string());
 
     acme_debug!("开始验证证书文件...");
 
-    // 检查私钥文件
-    let key_path = output_dir.join(format!("{}.key", primary_domain));
-    if !key_path.exists() {
-        return Err(acme_commander::error::AcmeError::IoError(
-            format!("私钥文件不存在: {}", key_path.display())
-        ));
-    }
-    let key_content = fs::read_to_string(&key_path)?;
-    if !key_content.contains("-----BEGIN PRIVATE KEY-----") {
-        return Err(acme_commander::error::AcmeError::IoError(
-            "私钥文件格式错误".to_string()
-        ));
-    }
-    acme_debug!("  ✅ 私钥文件验证通过");
-    acme_debug!("  私钥文件大小: {} 字节", key_content.len());
+    // 使用框架层的详细验证方法
+    let cert_manager = CertificateManager::new(KeyPair::generate()?); // 临时创建用于验证
+    let validation_result = cert_manager.validate_certificate_files(
+        output_dir,
+        &primary_domain,
+        true // 包含CSR验证
+    )?;
 
-    // 检查完整证书文件
-    let fullchain_path = output_dir.join(format!("{}.fullchain.pem", primary_domain));
-    if !fullchain_path.exists() {
-        return Err(acme_commander::error::AcmeError::IoError(
-            format!("完整证书文件不存在: {}", fullchain_path.display())
-        ));
-    }
-    let fullchain_content = fs::read_to_string(&fullchain_path)?;
-    if !fullchain_content.contains("-----BEGIN CERTIFICATE-----") {
-        return Err(acme_commander::error::AcmeError::IoError(
-            "完整证书文件格式错误".to_string()
-        ));
-    }
-    acme_debug!("  ✅ 完整证书文件验证通过");
-    acme_debug!("  完整证书文件大小: {} 字节", fullchain_content.len());
+    // 输出详细验证结果
+    acme_debug!("📋 证书文件验证结果:");
+    acme_debug!("  私钥文件: {}", if validation_result.private_key_valid { "✅ 有效" } else { "❌ 无效" });
+    acme_debug!("  完整证书链: {}", if validation_result.full_chain_valid { "✅ 有效" } else { "❌ 无效" });
+    acme_debug!("  单独证书: {}", if validation_result.certificate_valid { "✅ 有效" } else { "ℹ️ 不存在" });
+    acme_debug!("  证书链文件: {}", if validation_result.chain_valid { "✅ 有效" } else { "ℹ️ 不存在" });
+    acme_debug!("  CSR文件: {}", if validation_result.csr_valid { "✅ 有效" } else { "ℹ️ 不存在" });
+    acme_debug!("  证书总数: {}", validation_result.certificate_count);
 
-    // 检查单独证书文件（如果存在）
-    let cert_path = output_dir.join(format!("{}.pem", primary_domain));
-    if cert_path.exists() {
-        let cert_content = fs::read_to_string(&cert_path)?;
-        if !cert_content.contains("-----BEGIN CERTIFICATE-----") {
-            return Err(acme_commander::error::AcmeError::IoError(
-                "证书文件格式错误".to_string()
-            ));
-        }
-        acme_debug!("  ✅ 证书文件验证通过");
-        acme_debug!("  证书文件大小: {} 字节", cert_content.len());
-    }
-
-    // 检查证书链文件（如果存在）
-    let chain_path = output_dir.join(format!("{}.chain.pem", primary_domain));
-    if chain_path.exists() {
-        let chain_content = fs::read_to_string(&chain_path)?;
-        if chain_content.contains("-----BEGIN CERTIFICATE-----") {
-            acme_debug!("  ✅ 证书链文件验证通过");
-            acme_debug!("  证书链文件大小: {} 字节", chain_content.len());
+    // 输出文件大小信息
+    if !validation_result.file_sizes.is_empty() {
+        acme_debug!("📁 文件大小信息:");
+        for (file_type, size) in &validation_result.file_sizes {
+            acme_debug!("  {}: {} 字节", file_type, size);
         }
     }
 
+    // 检查必需文件是否有效
+    if !validation_result.is_all_valid() {
+        return Err(acme_commander::error::AcmeError::IoError(
+            format!("证书文件验证失败: {}", validation_result.summary())
+        ));
+    }
+
+    acme_info!("🎉 所有证书文件验证通过！");
     Ok(())
 }
 
