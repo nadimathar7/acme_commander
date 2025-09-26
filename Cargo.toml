@@ -109,6 +109,10 @@ hex = "0.4"
 # 目录操作
 dirs = "5.0"
 
+# 国际化支持
+rust-i18n = "3"
+sys-locale = "0.3"
+
 [dev-dependencies]
 tokio-test = "0.4"
 mockito = "1.2"

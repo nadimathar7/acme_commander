@@ -16,6 +16,7 @@ mod utils;
 use clap::{Parser, CommandFactory};
 
 use acme_commander::error::AcmeError;
+use acme_commander::i18n;
 use acme_commander::logger::{LogConfig, LogLevel, LogOutput, init_logger};
 use rat_logger::error;
 use cli::{Cli, Commands};
@@ -24,7 +25,12 @@ use utils::{init_logging, load_app_config, show_version_info, format_error};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    
+
+    // 初始化国际化系统（自动检测系统语言）
+    // 这里会自动根据系统语言环境设置语言
+    let current_lang = i18n::current_language();
+    println!("当前语言: {}", current_lang.name());
+
     // 初始化日志系统
     if let Err(e) = init_logging(cli.verbose, cli.log_output.clone(), cli.log_file.clone()) {
         eprintln!("❌ 日志初始化失败: {}", e);

@@ -18,6 +18,8 @@ pub mod crypto;
 pub mod auth;
 pub mod acme;
 pub mod dns;
+pub mod i18n;
+pub mod i18n_logger;
 pub mod config;
 
 // 重新导出常用类型

@@ -5,6 +5,8 @@
 use std::path::PathBuf;
 use std::error::Error;
 use acme_commander::error::AcmeError;
+use acme_commander::i18n;
+use acme_commander::i18n_logger;
 use acme_commander::logger::{LogConfig, LogLevel, LogOutput, init_logger};
 use rat_logger::info;
 use crate::cli::LogOutputType;
@@ -71,30 +73,31 @@ pub fn load_app_config(config_path: Option<PathBuf>) -> Result<acme_commander::c
 /// 显示版本信息
 pub fn show_version_info() {
     use rat_logger::info;
-    
-    info!("ACME Commander v{}", env!("CARGO_PKG_VERSION"));
+
+    i18n_logger::log_info_format("log.version_info", &[&format!("ACME Commander v{}", env!("CARGO_PKG_VERSION"))]);
     info!("构建信息:");
     if let Some(git_hash) = option_env!("GIT_HASH") {
-        info!("  - Git提交: {}", git_hash);
+        i18n_logger::log_info_format("log.git_commit", &[git_hash]);
     }
     if let Some(build_time) = option_env!("BUILD_TIME") {
-        info!("  - 构建时间: {}", build_time);
+        i18n_logger::log_info_format("log.build_time", &[build_time]);
     }
-    info!("  - 目标平台: {}", std::env::consts::ARCH);
+    i18n_logger::log_info_format("log.target_platform", &[std::env::consts::ARCH]);
 }
 
 
 
 /// 格式化错误信息
 pub fn format_error(error: &dyn std::error::Error) -> String {
+    // 对于其他类型的错误，使用默认格式化
     let mut message = error.to_string();
     let mut source = error.source();
-    
+
     while let Some(err) = source {
-        message.push_str(&format!("\n  原因: {}", err));
+        message.push_str(&format!("\n  {}: {}", i18n::t("error.reason"), err));
         source = err.source();
     }
-    
+
     message
 }
 

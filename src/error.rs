@@ -2,6 +2,7 @@
 //! 定义 ACME Commander 的所有错误类型
 
 use thiserror::Error;
+use crate::i18n;
 
 /// ACME Commander 主要错误类型
 #[derive(Debug, Error)]
@@ -105,6 +106,34 @@ pub enum AcmeError {
     /// 证书错误变体
     #[error("证书错误: {0}")]
     CertificateError(String),
+
+    /// 速率限制错误
+    #[error("超出速率限制")]
+    RateLimit,
+
+    /// 未授权错误
+    #[error("未授权")]
+    Unauthorized,
+
+    /// 禁止访问错误
+    #[error("禁止访问")]
+    Forbidden,
+
+    /// 未找到错误
+    #[error("未找到")]
+    NotFound,
+
+    /// 冲突错误
+    #[error("冲突")]
+    Conflict,
+
+    /// 内部错误
+    #[error("内部错误: {0}")]
+    InternalError(String),
+
+    /// 意外错误
+    #[error("意外错误: {0}")]
+    Unexpected(String),
 }
 
 /// 认证错误类型
@@ -268,4 +297,89 @@ macro_rules! crypto_error {
     ($variant:ident, $fmt:expr, $($arg:tt)*) => {
         $crate::error::CryptoError::$variant(format!($fmt, $($arg)*))
     };
+}
+
+/// 为 AcmeError 添加本地化支持
+impl AcmeError {
+    /// 获取本地化的错误消息
+    pub fn localized_message(&self) -> String {
+        match self {
+            AcmeError::Auth(_) => i18n::t("error.invalid_credentials"),
+            AcmeError::AcmeProtocolError(msg) => {
+                format!("{}: {}", i18n::t("error.acme_protocol"), msg)
+            },
+            AcmeError::ProtocolError(msg) => {
+                format!("{}: {}", i18n::t("error.protocol"), msg)
+            },
+            AcmeError::Certificate(_) => i18n::t("error.certificate"),
+            AcmeError::Dns(_) => i18n::t("error.dns"),
+            AcmeError::Crypto(_) => i18n::t("error.crypto"),
+            AcmeError::CryptoError(msg) => {
+                format!("{}: {}", i18n::t("error.crypto"), msg)
+            },
+            AcmeError::Http(_) => i18n::t("error.network_error"),
+            AcmeError::HttpError(msg) => {
+                format!("{}: {}", i18n::t("error.network_error"), msg)
+            },
+            AcmeError::Io(_) => i18n::t("error.io"),
+            AcmeError::IoError(msg) => {
+                format!("{}: {}", i18n::t("error.io"), msg)
+            },
+            AcmeError::Json(_) => i18n::t("error.json"),
+            AcmeError::JsonError(msg) => {
+                format!("{}: {}", i18n::t("error.json"), msg)
+            },
+            AcmeError::Config(msg) => {
+                if msg.contains("配置文件") {
+                    i18n::t("error.config_load_failed")
+                } else {
+                    format!("{}: {}", i18n::t("error.config"), msg)
+                }
+            },
+            AcmeError::ConfigError(msg) => {
+                format!("{}: {}", i18n::t("error.config"), msg)
+            },
+            AcmeError::Validation(msg) => {
+                format!("{}: {}", i18n::t("error.validation"), msg)
+            },
+            AcmeError::Timeout(msg) => {
+                format!("{}: {}", i18n::t("error.timeout"), msg)
+            },
+            AcmeError::RateLimit => i18n::t("error.rate_limit"),
+            AcmeError::Unauthorized => i18n::t("error.unauthorized"),
+            AcmeError::Forbidden => i18n::t("error.forbidden"),
+            AcmeError::NotFound => i18n::t("error.not_found"),
+            AcmeError::Conflict => i18n::t("error.conflict"),
+            AcmeError::InternalError(msg) => {
+                format!("{}: {}", i18n::t("error.internal"), msg)
+            },
+            AcmeError::Unexpected(msg) => {
+                format!("{}: {}", i18n::t("error.unexpected"), msg)
+            },
+            AcmeError::General(msg) => {
+                format!("{}: {}", i18n::t("error.general"), msg)
+            },
+            AcmeError::AccountNotFound(msg) => {
+                format!("{}: {}", i18n::t("error.account_not_found"), msg)
+            },
+            AcmeError::InvalidDomain(msg) => {
+                format!("{}: {}", i18n::t("error.invalid_domain"), msg)
+            },
+            AcmeError::OrderFailed(msg) => {
+                format!("{}: {}", i18n::t("error.order_failed"), msg)
+            },
+            AcmeError::ChallengeValidationFailed(msg) => {
+                format!("{}: {}", i18n::t("error.challenge_validation_failed"), msg)
+            },
+            AcmeError::InvalidUrl(msg) => {
+                format!("{}: {}", i18n::t("error.invalid_url"), msg)
+            },
+            AcmeError::DnsError(msg) => {
+                format!("{}: {}", i18n::t("error.dns"), msg)
+            },
+            AcmeError::CertificateError(msg) => {
+                format!("{}: {}", i18n::t("error.certificate"), msg)
+            },
+        }
+    }
 }
