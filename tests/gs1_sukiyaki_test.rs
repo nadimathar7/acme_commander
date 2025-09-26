@@ -1,6 +1,8 @@
 //! acme_commander 库的完整证书申请测试
 //! 使用 gs1.sukiyaki.su 域名在沙盒模式下运行，真实申请并保存证书
 
+mod test_common;
+use test_common::*;
 use acme_commander::acme::{AcmeClient, AcmeConfig, OrderManager, AccountManager, ChallengeType};
 use acme_commander::acme::challenge::ChallengeManager;
 use acme_commander::crypto::KeyPair;
@@ -14,7 +16,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// 测试域名 - 从配置文件读取
 /// 测试证书输出目录
 const TEST_OUTPUT_DIR: &str = "./test_certs";
 
@@ -45,7 +46,7 @@ async fn test_complete_certificate_issuance() -> AcmeResult<()> {
         ))?;
     acme_info!("✅ 成功加载配置文件");
     acme_info!("测试域名: {:?}", app_config.certificate.domains);
-    acme_debug!("  ACME服务器: {}", app_config.acme.directory_url);
+    acme_debug!("  ACME服务器: {}", app_config.acme.server_name());
     acme_debug!("  DNS提供商: {}", app_config.dns.provider);
 
     // 第二步：准备输出目录
@@ -55,20 +56,20 @@ async fn test_complete_certificate_issuance() -> AcmeResult<()> {
 
     // 第三步：创建账户密钥
     acme_info!("\n[步骤 3] 创建账户密钥");
-    let account_key = KeyPair::generate()?;
+    let account_key = create_test_account_key();
     acme_debug!("✅ 成功生成账户密钥");
     acme_debug!("  密钥类型: ECDSA (P-256)");
 
     // 第四步：创建ACME客户端配置
     acme_info!("\n[步骤 4] 创建ACME客户端");
     let acme_config = AcmeConfig {
-        directory_url: app_config.acme.directory_url.clone(),
+        directory_url: app_config.acme.directory_url().to_string(),
         contact_email: Some(app_config.account.email.clone()),
         terms_of_service_agreed: true,
         eab_credentials: None,
         timeout: Duration::from_secs(app_config.acme.timeout_seconds),
         dry_run: false,
-        user_agent: "acme-commander/0.1.1".to_string(),
+        user_agent: app_config.acme.user_agent.clone(),
     };
 
     let mut acme_client = AcmeClient::new(acme_config, account_key.clone())?;
@@ -77,13 +78,12 @@ async fn test_complete_certificate_issuance() -> AcmeResult<()> {
     // 第五步：注册账户
     acme_info!("\n[步骤 5] 注册ACME账户");
     let mut account_manager = AccountManager::new(&mut acme_client);
-    let account = account_manager.register_account(None, true, None).await?;
+    let (account, _) = account_manager.register_account(None, true, None).await?;
     acme_debug!("✅ 成功注册ACME账户");
-    acme_debug!("  账户ID: {}", account.id);
 
     // 第六步：创建证书密钥
     acme_info!("\n[步骤 6] 创建证书密钥");
-    let cert_key = KeyPair::generate()?;
+    let cert_key = create_test_certificate_key();
     acme_debug!("✅ 成功生成证书密钥");
     acme_debug!("  密钥类型: ECDSA (P-256)");
 
@@ -103,7 +103,7 @@ async fn test_complete_certificate_issuance() -> AcmeResult<()> {
 
     // 第八步：处理授权和挑战
     acme_info!("\n[步骤 8] 处理授权和DNS挑战");
-    process_authorizations(&mut acme_client, &mut order).await?;
+    process_authorizations(&mut acme_client, &mut order, &app_config).await?;
     acme_info!("✅ 成功完成所有DNS挑战");
 
     // 第九步：等待订单就绪
@@ -213,6 +213,7 @@ fn prepare_output_directory() -> AcmeResult<()> {
 async fn process_authorizations(
     acme_client: &mut AcmeClient,
     order: &mut acme_commander::acme::order::Order,
+    app_config: &config::AcmeConfig,
 ) -> AcmeResult<()> {
     // 创建OrderManager来获取授权信息
     let mut order_manager = OrderManager::new(acme_client);
@@ -253,12 +254,8 @@ async fn process_authorizations(
         acme_debug!("  DNS记录值: {}", dns_record_value);
 
         // 创建DNS挑战管理器
-        let dns_manager = create_dns_manager().await?;
-        let mut dns_challenge_manager = DnsChallengeManager::new(
-            dns_manager,
-            Some(300), // 默认TTL 5分钟
-            Some(600), // 传播超时10分钟
-        );
+        let dns_manager = create_dns_manager(app_config).await?;
+        let mut dns_challenge_manager = create_custom_dns_challenge_manager(dns_manager, 300, 600);
 
         // 添加DNS记录
         let challenge_record = dns_challenge_manager.add_challenge_record(
@@ -300,9 +297,7 @@ async fn process_authorizations(
 }
 
 /// 创建DNS管理器
-async fn create_dns_manager() -> AcmeResult<Box<dyn DnsManager>> {
-    let app_config = config::load_config(Some(CONFIG_FILE.into()), None)?;
-
+async fn create_dns_manager(app_config: &config::AcmeConfig) -> AcmeResult<Box<dyn DnsManager>> {
     match app_config.dns.provider.as_str() {
         "cloudflare" => {
             let cloudflare_token = config::get_cloudflare_token(Some(CONFIG_FILE.into()))
@@ -401,7 +396,7 @@ fn save_certificate_pem_files(
     acme_debug!("  完整证书长度: {} 字节", certificate_pem.len());
 
     // 如果配置了CSR文件，复制到测试输出目录
-    if let Some(ref csr_file) = csr_file {
+    if let Some(csr_file) = csr_file {
         if csr_file.exists() {
             let csr_dest_path = output_dir.join(format!("{}.csr", primary_domain));
             fs::copy(csr_file, &csr_dest_path)
@@ -478,7 +473,7 @@ fn test_config_loading() {
     match result {
         Ok(config) => {
             acme_info!("✅ 成功加载配置文件");
-            acme_debug!("  ACME服务器: {}", config.acme.directory_url);
+            acme_debug!("  ACME服务器: {}", config.acme.directory_url());
             acme_debug!("  DNS提供商: {}", config.dns.provider);
 
             if let Some(cloudflare) = &config.dns.cloudflare {

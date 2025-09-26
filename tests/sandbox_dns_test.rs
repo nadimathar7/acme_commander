@@ -1,92 +1,36 @@
 //! 沙盒模式 DNS 验证测试
 //! 使用 Let's Encrypt 测试环境进行 DNS 验证测试
 
+mod test_common;
+use test_common::*;
 use acme_commander::dns::cloudflare::CloudflareDnsManager;
 use acme_commander::dns::{DnsManager, DnsChallengeManager};
 use acme_commander::acme::{AcmeClient, AcmeConfig};
-use acme_commander::crypto::KeyPair;
-use acme_commander::directories;
-use acme_commander::logger::{init_logger, LogConfig, LogLevel, LogOutput};
-
-/// 测试域名
-const TEST_DOMAIN: &str = "gs1.sukiyaki.su";
 
 
 #[tokio::test]
 async fn test_sandbox_dns_validation() -> Result<(), Box<dyn std::error::Error>> {
-    // 初始化日志
-    let _ = init_logger(LogConfig {
-        level: LogLevel::Debug,
-        output: LogOutput::Terminal,
-        ..Default::default()
-    });
-    
+    init_test_logger();
+
     println!("开始沙盒模式 DNS 验证测试，域名: {}", TEST_DOMAIN);
-    
+
     // 创建 Cloudflare DNS 管理器
-    let dns_manager = match acme_commander::config::get_cloudflare_token(None)
-        .map(|token| CloudflareDnsManager::new(token))
-        .transpose() {
-        Ok(Some(manager)) => {
-            println!("✅ 成功创建 Cloudflare DNS 管理器");
-            manager
-        },
-        Ok(None) => {
-            return Err("无法创建 Cloudflare DNS 管理器: 未找到配置".into());
-        },
-        Err(e) => {
-            return Err(format!("无法创建 Cloudflare DNS 管理器: {}", e).into());
-        }
-    };
-    
-    // 验证 Cloudflare 凭证
-    match dns_manager.validate_credentials().await {
-        Ok(true) => {
-            println!("✅ Cloudflare API Token 验证成功");
-        },
-        Ok(false) => {
-            panic!("Cloudflare API Token 无效");
-        },
-        Err(e) => {
-            panic!("验证 Cloudflare API Token 失败: {}", e);
-        }
-    }
+    let dns_manager = create_test_cloudflare_manager().await?;
+    println!("✅ 成功创建 Cloudflare DNS 管理器");
+    println!("✅ Cloudflare API Token 验证成功");
     
     // 创建 DNS 挑战管理器
-    let dns_challenge_manager = DnsChallengeManager::new(
-        Box::new(dns_manager),
-        Some(60),  // TTL 60 秒
-        Some(300), // 传播超时 5 分钟
-    );
-    
+    let dns_challenge_manager = create_test_dns_challenge_manager(dns_manager);
+
     // 创建账户密钥
-    let account_key = match KeyPair::generate() {
-        Ok(key) => {
-            println!("✅ 成功生成账户密钥");
-            key
-        },
-        Err(e) => {
-            panic!("无法生成账户密钥: {}", e);
-        }
-    };
-    
+    let account_key = create_test_account_key();
+    println!("✅ 成功生成账户密钥");
+
     // 创建 ACME 客户端配置 (使用 Let's Encrypt 测试环境)
-    let acme_config = AcmeConfig {
-        directory_url: directories::LETSENCRYPT_STAGING.to_string(),
-        dry_run: false, // 不使用 dry-run 模式
-        ..Default::default()
-    };
-    
+    let acme_config = create_test_acme_config(Some("test@example.com".to_string()));
+
     // 创建 ACME 客户端
-    let mut acme_client = match AcmeClient::new(acme_config, account_key.clone()) {
-        Ok(client) => {
-            println!("✅ 成功创建 ACME 客户端");
-            client
-        },
-        Err(e) => {
-            panic!("无法创建 ACME 客户端: {}", e);
-        }
-    };
+    let mut acme_client = create_test_acme_client(acme_config, account_key.clone())?;
     
     // 注册账户
     let _account = {

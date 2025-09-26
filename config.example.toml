@@ -4,10 +4,12 @@
 
 [acme]
 # ACME 服务器配置 (沙盒模式)
-directory_url = "https://acme-staging-v02.api.letsencrypt.org/directory"
-contact_email = "your-email@example.com"
+provider = "letsencrypt"
+environment = "sandbox"
 terms_of_service_agreed = true
-timeout = 30
+timeout_seconds = 30
+retry_count = 3
+retry_interval = 5
 user_agent = "acme-commander/0.1.1"
 
 [certificate]

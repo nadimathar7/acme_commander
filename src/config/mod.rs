@@ -7,6 +7,80 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::fs;
 
+/// ACME 提供商枚举
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AcmeProvider {
+    /// Let's Encrypt
+    #[serde(rename = "letsencrypt")]
+    LetsEncrypt,
+    /// ZeroSSL (暂未实现)
+    #[serde(rename = "zerossl")]
+    ZeroSsl,
+}
+
+/// ACME 环境枚举
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AcmeEnvironment {
+    /// 沙盒环境（测试用）
+    #[serde(rename = "sandbox")]
+    Sandbox,
+    /// 生产环境
+    #[serde(rename = "production")]
+    Production,
+}
+
+impl Default for AcmeEnvironment {
+    fn default() -> Self {
+        Self::Sandbox
+    }
+}
+
+impl AcmeProvider {
+    /// 获取提供商的目录URL
+    pub fn directory_url(&self, environment: AcmeEnvironment) -> &'static str {
+        match (self, environment) {
+            (AcmeProvider::LetsEncrypt, AcmeEnvironment::Sandbox) => {
+                "https://acme-staging-v02.api.letsencrypt.org/directory"
+            },
+            (AcmeProvider::LetsEncrypt, AcmeEnvironment::Production) => {
+                "https://acme-v02.api.letsencrypt.org/directory"
+            },
+            (AcmeProvider::ZeroSsl, AcmeEnvironment::Sandbox) => {
+                "https://acme.zerossl.com/v2/DV90"
+            },
+            (AcmeProvider::ZeroSsl, AcmeEnvironment::Production) => {
+                "https://acme.zerossl.com/v2/DV90"
+            },
+        }
+    }
+
+    /// 获取提供商显示名称
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            AcmeProvider::LetsEncrypt => "Let's Encrypt",
+            AcmeProvider::ZeroSsl => "ZeroSSL",
+        }
+    }
+
+    /// 检查提供商是否支持
+    pub fn is_supported(&self) -> bool {
+        match self {
+            AcmeProvider::LetsEncrypt => true,
+            AcmeProvider::ZeroSsl => false, // 暂未实现
+        }
+    }
+}
+
+impl AcmeEnvironment {
+    /// 获取环境显示名称
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            AcmeEnvironment::Sandbox => "沙盒环境",
+            AcmeEnvironment::Production => "生产环境",
+        }
+    }
+}
+
 /// ACME Commander 配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcmeConfig {
@@ -31,12 +105,10 @@ pub struct AcmeConfig {
 /// ACME 服务器配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcmeServerConfig {
-    /// ACME 目录 URL
-    pub directory_url: String,
-    /// 服务器名称
-    pub server_name: String,
-    /// 是否为生产环境
-    pub production: bool,
+    /// ACME 提供商
+    pub provider: AcmeProvider,
+    /// ACME 环境
+    pub environment: AcmeEnvironment,
     /// 外部账户绑定 (EAB) 配置
     pub eab: Option<EabConfig>,
     /// 请求超时时间（秒）
@@ -45,6 +117,47 @@ pub struct AcmeServerConfig {
     pub retry_count: u32,
     /// 重试间隔（秒）
     pub retry_interval: u64,
+    /// 用户代理
+    pub user_agent: String,
+}
+
+impl AcmeServerConfig {
+    /// 获取目录URL
+    pub fn directory_url(&self) -> &'static str {
+        self.provider.directory_url(self.environment)
+    }
+
+    /// 获取服务器显示名称
+    pub fn server_name(&self) -> String {
+        format!("{} {}", self.provider.display_name(), self.environment.display_name())
+    }
+
+    /// 检查配置是否有效
+    pub fn validate(&self) -> AcmeResult<()> {
+        if !self.provider.is_supported() {
+            return Err(AcmeError::ConfigError(
+                format!("ACME提供商 '{}' 暂不支持", self.provider.display_name())
+            ));
+        }
+
+        if self.timeout_seconds == 0 {
+            return Err(AcmeError::ConfigError("超时时间必须大于0".to_string()));
+        }
+
+        if self.retry_count == 0 {
+            return Err(AcmeError::ConfigError("重试次数必须大于0".to_string()));
+        }
+
+        if self.retry_interval == 0 {
+            return Err(AcmeError::ConfigError("重试间隔必须大于0".to_string()));
+        }
+
+        if self.user_agent.trim().is_empty() {
+            return Err(AcmeError::ConfigError("用户代理不能为空".to_string()));
+        }
+
+        Ok(())
+    }
 }
 
 /// 外部账户绑定配置
@@ -242,13 +355,13 @@ impl Default for AcmeConfig {
 impl Default for AcmeServerConfig {
     fn default() -> Self {
         Self {
-            directory_url: "https://acme-staging-v02.api.letsencrypt.org/directory".to_string(),
-            server_name: "Let's Encrypt Staging".to_string(),
-            production: false,
+            provider: AcmeProvider::LetsEncrypt,
+            environment: AcmeEnvironment::Sandbox,
             eab: None,
             timeout_seconds: 30,
             retry_count: 3,
             retry_interval: 5,
+            user_agent: format!("acme-commander/{}", env!("CARGO_PKG_VERSION")),
         }
     }
 }
@@ -483,9 +596,7 @@ impl ConfigManager {
     /// 验证配置
     fn validate_config(&self) -> AcmeResult<()> {
         // 验证 ACME 服务器配置
-        if self.config.acme.directory_url.is_empty() {
-            return Err(AcmeError::ConfigError("ACME directory URL cannot be empty".to_string()));
-        }
+        self.config.acme.validate()?;
         
         // 验证账户配置
         if self.config.account.email.is_empty() {
@@ -519,12 +630,16 @@ impl ConfigManager {
     /// 从环境变量加载配置
     pub fn load_from_env(&mut self) -> AcmeResult<()> {
         // 加载 ACME 服务器配置
-        if let Ok(directory_url) = std::env::var("ACME_DIRECTORY_URL") {
-            self.config.acme.directory_url = directory_url;
+        if let Ok(provider_str) = std::env::var("ACME_PROVIDER") {
+            if let Ok(provider) = serde_json::from_str::<AcmeProvider>(&format!("\"{}\"", provider_str)) {
+                self.config.acme.provider = provider;
+            }
         }
-        
-        if let Ok(production) = std::env::var("ACME_PRODUCTION") {
-            self.config.acme.production = production.parse().unwrap_or(false);
+
+        if let Ok(environment_str) = std::env::var("ACME_ENVIRONMENT") {
+            if let Ok(environment) = serde_json::from_str::<AcmeEnvironment>(&format!("\"{}\"", environment_str)) {
+                self.config.acme.environment = environment;
+            }
         }
         
         // 加载账户配置
@@ -582,21 +697,23 @@ impl ConfigManager {
         if let Some(ref server) = args.server {
             match server.as_str() {
                 "letsencrypt" | "production" => {
-                    self.config.acme.directory_url = "https://acme-v02.api.letsencrypt.org/directory".to_string();
-                    self.config.acme.server_name = "Let's Encrypt Production".to_string();
-                    self.config.acme.production = true;
+                    self.config.acme.provider = AcmeProvider::LetsEncrypt;
+                    self.config.acme.environment = AcmeEnvironment::Production;
                 }
                 "letsencrypt-staging" | "staging" => {
-                    self.config.acme.directory_url = "https://acme-staging-v02.api.letsencrypt.org/directory".to_string();
-                    self.config.acme.server_name = "Let's Encrypt Staging".to_string();
-                    self.config.acme.production = false;
+                    self.config.acme.provider = AcmeProvider::LetsEncrypt;
+                    self.config.acme.environment = AcmeEnvironment::Sandbox;
                 }
-                url if url.starts_with("http") => {
-                    self.config.acme.directory_url = url.to_string();
-                    self.config.acme.server_name = "Custom Server".to_string();
+                "zerossl" => {
+                    self.config.acme.provider = AcmeProvider::ZeroSsl;
+                    self.config.acme.environment = AcmeEnvironment::Production;
+                }
+                "zerossl-staging" => {
+                    self.config.acme.provider = AcmeProvider::ZeroSsl;
+                    self.config.acme.environment = AcmeEnvironment::Sandbox;
                 }
                 _ => {
-                    return Err(AcmeError::ConfigError(format!("Invalid server: {}", server)));
+                    return Err(AcmeError::ConfigError(format!("Invalid server: {}. Supported: letsencrypt, letsencrypt-staging, zerossl, zerossl-staging", server)));
                 }
             }
         }
